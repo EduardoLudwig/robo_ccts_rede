@@ -35,33 +35,39 @@ def log(message, log_file, espacamento=False):
 
 def copiar_arquivo(origem, destino_base, nome_arquivo, log_file):
     
-    nome_arquivo_com_prefixo = nome_arquivo
-    
+    nome_arquivo_com_sufixo = nome_arquivo
     nome_arquivo_limpo = nome_arquivo
-    if nome_arquivo_limpo.startswith(("[FEITO]_", "[FALHA_MANUAL]_")):
-        partes = nome_arquivo_limpo.split('_', 1)
-        if len(partes) > 1:
-            nome_arquivo_limpo = partes[1]
+    
+    nome_base, extensao = os.path.splitext(nome_arquivo)
+    sufixo_feito = "_[FEITO]"
+    sufixo_falha = "_[FALHA_MANUAL]"
 
+    if nome_base.endswith(sufixo_feito):
+        nome_base_limpo = nome_base[:-len(sufixo_feito)]
+        nome_arquivo_limpo = nome_base_limpo + extensao
+    elif nome_base.endswith(sufixo_falha):
+        nome_base_limpo = nome_base[:-len(sufixo_falha)]
+        nome_arquivo_limpo = nome_base_limpo + extensao
+    
     numeros_loja = extrair_numeros_loja(nome_arquivo_limpo)
 
     if not numeros_loja:
-        log(f"[ERRO] Nenhum número de loja encontrado em: {nome_arquivo_com_prefixo}\n", log_file, espacamento=True)
+        log(f"[ERRO] Nenhum número de loja encontrado em: {nome_arquivo_com_sufixo}\n", log_file, espacamento=True)
         return
 
-    log(f"\n[PROCESSANDO] {nome_arquivo_com_prefixo}", log_file, espacamento=True)
+    log(f"\n[PROCESSANDO] {nome_arquivo_com_sufixo}", log_file, espacamento=True)
     log(f"[NÚMEROS ENCONTRADOS]: {', '.join(numeros_loja)}", log_file)
 
-    origem_completa = os.path.join(origem, nome_arquivo_com_prefixo)
+    origem_completa = os.path.join(origem, nome_arquivo_com_sufixo)
 
     match_vigencia = re.search(r'_(\d{4}(?:-\d{4})?)', nome_arquivo_limpo)
-    extensao = os.path.splitext(nome_arquivo_limpo)[1]
 
-    if not match_vigencia or not extensao:
-        log(f"[ATENÇÃO] Período de vigência não encontrado no nome: {nome_arquivo_com_prefixo}. Arquivo será pulado.", log_file)
+    if not match_vigencia:
+        log(f"[ATENÇÃO] Período de vigência não encontrado no nome: {nome_arquivo_com_sufixo}. Arquivo será pulado.", log_file)
         return
         
     vigencia = match_vigencia.group(1)
+    extensao_limpa = os.path.splitext(nome_arquivo_limpo)[1]
     log(f"[VIGÊNCIA ENCONTRADA]: {vigencia}", log_file)
     
     sucesso = False 
@@ -71,7 +77,7 @@ def copiar_arquivo(origem, destino_base, nome_arquivo, log_file):
         if diretorios:
             numero_formatado_para_nome = f"{int(numero):03d}"
             for destino_dir in diretorios:
-                novo_nome = f"VIG.{numero_formatado_para_nome}_{vigencia}{extensao}"
+                novo_nome = f"VIG.{numero_formatado_para_nome}_{vigencia}{extensao_limpa}"
                 destino_completo = os.path.join(destino_dir, novo_nome)
 
                 try:
@@ -84,7 +90,8 @@ def copiar_arquivo(origem, destino_base, nome_arquivo, log_file):
             log(f"[ERRO] Nenhum diretório de destino encontrado para loja {numero} (formatado como {f'{int(numero):03d}'}).", log_file)
 
     if not sucesso:
-         log(f"[FALHA] O arquivo {nome_arquivo_com_prefixo} não pôde ser copiado para nenhum diretório.\n", log_file)
+         log(f"[FALHA] O arquivo {nome_arquivo_com_sufixo} não pôde ser copiado para nenhum diretório.\n", log_file)
+
 
 def processar_arquivos(diretorio_ccts, destino_rede, log_path):
     

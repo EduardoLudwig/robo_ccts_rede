@@ -1,8 +1,6 @@
-# Arquivos e pastas do PyInstaller
 /dist/
 /build/
 *.spec
 
-# Pasta de logs
 /Logs/
 __pycache__
