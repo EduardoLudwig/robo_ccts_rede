@@ -1,29 +1,12 @@
 import os
-import shutil
 import re
+import shutil
 from datetime import datetime
 
-def extrair_numeros_loja(numero_arquivo):
-    numero_limpo = numero_arquivo.split("_")[0]
-    
-    return re.findall(r'\b\d{1,3}\b', numero_limpo)
+EXTENSOES_PERMITIDAS = (".pdf", ".doc", ".docx")
+RE_MARCADOR_CONCLUIDO = re.compile(r"_(?:\[FEITO\]|\[JA_EXISTE\])$", re.IGNORECASE)
+RE_MARCADOR_LIMPEZA = re.compile(r"_(?:\[FEITO\]|\[JA_EXISTE\]|\[FALHA_MANUAL\])$", re.IGNORECASE)
 
-def encontrar_diretorios(destino_base, numero_loja):
-    diretorios_encontrados = []
-    numero_loja_formatado = f"{int(numero_loja):03d}" 
-
-    padrao_loja = re.compile(rf'^{numero_loja_formatado}\s*-\s*', re.IGNORECASE)
-
-    if not os.path.exists(destino_base):
-        print(f"[ERRO] Diretório de destino base não encontrado: {destino_base}")
-        return []
-
-    for pasta in os.listdir(destino_base):
-        caminho_completo = os.path.join(destino_base, pasta)
-
-        if os.path.isdir(caminho_completo) and padrao_loja.match(pasta):  
-            diretorios_encontrados.append(caminho_completo)
-    return diretorios_encontrados
 
 def log(message, log_file, espacamento=False):
     if espacamento:
@@ -32,89 +15,298 @@ def log(message, log_file, espacamento=False):
 
     print(message.strip())
     log_file.write(message + "\n")
+    log_file.flush()
 
-def copiar_arquivo(origem, destino_base, nome_arquivo, log_file):
-    
-    nome_arquivo_com_sufixo = nome_arquivo
-    nome_arquivo_limpo = nome_arquivo
-    
+
+def tem_marcador_concluido(nome_arquivo):
+    nome_base, _ = os.path.splitext(nome_arquivo)
+    return bool(RE_MARCADOR_CONCLUIDO.search(nome_base))
+
+
+def remover_marcador(nome_arquivo):
     nome_base, extensao = os.path.splitext(nome_arquivo)
-    sufixo_feito = "_[FEITO]"
-    sufixo_falha = "_[FALHA_MANUAL]"
+    return RE_MARCADOR_LIMPEZA.sub("", nome_base) + extensao
 
-    if nome_base.endswith(sufixo_feito):
-        nome_base_limpo = nome_base[:-len(sufixo_feito)]
-        nome_arquivo_limpo = nome_base_limpo + extensao
-    elif nome_base.endswith(sufixo_falha):
-        nome_base_limpo = nome_base[:-len(sufixo_falha)]
-        nome_arquivo_limpo = nome_base_limpo + extensao
-    
-    numeros_loja = extrair_numeros_loja(nome_arquivo_limpo)
 
-    if not numeros_loja:
-        log(f"[ERRO] Nenhum número de loja encontrado em: {nome_arquivo_com_sufixo}\n", log_file, espacamento=True)
-        return
+def extrair_numeros_loja(nome_arquivo):
+    primeira_parte = nome_arquivo.split("_")[0]
+    return re.findall(r"\b\d{1,3}\b", primeira_parte)
 
-    log(f"\n[PROCESSANDO] {nome_arquivo_com_sufixo}", log_file, espacamento=True)
+
+def extrair_dados_nome(nome_arquivo_limpo):
+    nome_sem_extensao, extensao = os.path.splitext(nome_arquivo_limpo)
+    match = re.search(r"_(\d{4}(?:-\d{4})?)(?:_(.*))?$", nome_sem_extensao)
+
+    if not match:
+        return None, "", extensao
+
+    vigencia = match.group(1)
+    complemento = (match.group(2) or "").strip().strip("_").strip()
+
+    return vigencia, complemento, extensao
+
+
+def nome_no_padrao(nome_arquivo):
+    if not extrair_numeros_loja(nome_arquivo):
+        return False
+
+    vigencia, _, _ = extrair_dados_nome(nome_arquivo)
+    return vigencia is not None
+
+
+def indexar_lojas(destino_base):
+    indice = {}
+
+    if not os.path.isdir(destino_base):
+        return indice
+
+    for pasta in sorted(os.listdir(destino_base)):
+        caminho = os.path.join(destino_base, pasta)
+
+        if not os.path.isdir(caminho):
+            continue
+
+        match = re.match(r"^(\d{3})\s*-\s*", pasta)
+        if match:
+            indice.setdefault(int(match.group(1)), []).append(caminho)
+
+    return indice
+
+
+def coletar_arquivos(raiz, log_file):
+    prioridades = {"raiz": 0, "reprocessar": 1, "sucesso": 2}
+    pastas = (
+        ("sucesso", os.path.join(raiz, "Sucesso")),
+        ("reprocessar", os.path.join(raiz, "Reprocessar")),
+        ("raiz", raiz),
+    )
+
+    candidatos = {}
+    fora_do_padrao = []
+
+    for origem, pasta in pastas:
+        if not os.path.isdir(pasta):
+            continue
+
+        for nome in os.listdir(pasta):
+            caminho = os.path.join(pasta, nome)
+
+            if not os.path.isfile(caminho):
+                continue
+
+            _, extensao = os.path.splitext(nome)
+            if extensao.lower() not in EXTENSOES_PERMITIDAS:
+                log(
+                    f"[IGNORADO] Arquivo {nome} não é um tipo de documento permitido "
+                    f"(extensão: {extensao}).",
+                    log_file,
+                )
+                continue
+
+            if origem in ("raiz", "reprocessar") and tem_marcador_concluido(nome):
+                log(f"[IGNORADO] '{nome}' já foi processado (marcador).", log_file)
+                continue
+
+            nome_limpo = remover_marcador(nome)
+
+            if not nome_no_padrao(nome_limpo):
+                if nome_limpo not in fora_do_padrao:
+                    fora_do_padrao.append(nome_limpo)
+                    log(
+                        f"[IGNORADO] '{nome}' está fora do padrão de nome; "
+                        "não será processado.",
+                        log_file,
+                    )
+                continue
+
+            try:
+                tamanho = os.path.getsize(caminho)
+            except OSError as e:
+                log(f"[AVISO] Não foi possível ler '{caminho}': {e}", log_file)
+                continue
+
+            chave = f"{nome_limpo.lower()}|{tamanho}"
+            existente = candidatos.get(chave)
+
+            if existente and existente["prioridade"] >= prioridades[origem]:
+                continue
+
+            vigencia, complemento, _ = extrair_dados_nome(nome_limpo)
+
+            candidatos[chave] = {
+                "nome": nome,
+                "nome_limpo": nome_limpo,
+                "caminho": caminho,
+                "origem": origem,
+                "prioridade": prioridades[origem],
+                "numeros": list(dict.fromkeys(extrair_numeros_loja(nome_limpo))),
+                "vigencia": vigencia,
+                "complemento": complemento,
+            }
+
+    return sorted(candidatos.values(), key=lambda item: item["nome_limpo"].lower()), fora_do_padrao
+
+
+def copiar_arquivo(item, indice_lojas, log_file):
+    nome_limpo = item["nome_limpo"]
+    numeros_loja = item["numeros"]
+    vigencia = item["vigencia"]
+    complemento = item["complemento"]
+    extensao = os.path.splitext(nome_limpo)[1]
+    sufixo_complemento = f"_{complemento.upper()}" if complemento else ""
+
+    log(f"\n[PROCESSANDO] {item['nome']}", log_file, espacamento=True)
+    log(f"[ORIGEM]: {item['origem']}", log_file)
     log(f"[NÚMEROS ENCONTRADOS]: {', '.join(numeros_loja)}", log_file)
-
-    origem_completa = os.path.join(origem, nome_arquivo_com_sufixo)
-
-    match_vigencia = re.search(r'_(\d{4}(?:-\d{4})?)', nome_arquivo_limpo)
-
-    if not match_vigencia:
-        log(f"[ATENÇÃO] Período de vigência não encontrado no nome: {nome_arquivo_com_sufixo}. Arquivo será pulado.", log_file)
-        return
-        
-    vigencia = match_vigencia.group(1)
-    extensao_limpa = os.path.splitext(nome_arquivo_limpo)[1]
     log(f"[VIGÊNCIA ENCONTRADA]: {vigencia}", log_file)
-    
-    sucesso = False 
+
+    if complemento:
+        log(f"[COMPLEMENTO ENCONTRADO]: {complemento}", log_file)
+
+    lojas_resultado = {}
+    destinos = []
+    houve_falha = False
+    houve_copia = False
+
     for numero in numeros_loja:
-        diretorios = encontrar_diretorios(destino_base, numero)
-        
-        if diretorios:
-            numero_formatado_para_nome = f"{int(numero):03d}"
-            for destino_dir in diretorios:
-                novo_nome = f"VIG.{numero_formatado_para_nome}_{vigencia}{extensao_limpa}"
-                destino_completo = os.path.join(destino_dir, novo_nome)
+        numero_formatado = f"{int(numero):03d}"
+        diretorios = indice_lojas.get(int(numero), [])
 
-                try:
-                    shutil.copy2(origem_completa, destino_completo)
-                    log(f"     [OK] Copiado para: {destino_completo}", log_file)
-                    sucesso = True
-                except Exception as e:
-                    log(f"[ERRO] Falha ao copiar para {destino_completo}: {str(e)}", log_file)
+        if not diretorios:
+            log(
+                f"[ERRO] Nenhum diretório de destino encontrado para loja {numero} "
+                f"(formatado como {numero_formatado}).",
+                log_file,
+            )
+            lojas_resultado[numero_formatado] = "FALHA_SEM_PASTA"
+            houve_falha = True
+            continue
+
+        novo_nome = f"VIG.{numero_formatado}_{vigencia}{sufixo_complemento}{extensao}"
+        copiou_loja = False
+        existente_loja = False
+        falhou_loja = False
+
+        for destino_dir in diretorios:
+            destino_completo = os.path.join(destino_dir, novo_nome)
+
+            if os.path.exists(destino_completo):
+                log(f"     [JA_EXISTE] Já existia no destino: {destino_completo}", log_file)
+                existente_loja = True
+                destinos.append(destino_completo)
+                continue
+
+            try:
+                shutil.copy2(item["caminho"], destino_completo)
+                log(f"     [OK] Copiado para: {destino_completo}", log_file)
+                copiou_loja = True
+                destinos.append(destino_completo)
+            except Exception as e:
+                log(f"[ERRO] Falha ao copiar para {destino_completo}: {e}", log_file)
+                falhou_loja = True
+
+        if falhou_loja:
+            lojas_resultado[numero_formatado] = "FALHA_COPIA"
+            houve_falha = True
+        elif copiou_loja:
+            lojas_resultado[numero_formatado] = "SUCESSO"
+            houve_copia = True
+        elif existente_loja:
+            lojas_resultado[numero_formatado] = "JA_EXISTE"
         else:
-            log(f"[ERRO] Nenhum diretório de destino encontrado para loja {numero} (formatado como {f'{int(numero):03d}'}).", log_file)
+            lojas_resultado[numero_formatado] = "FALHA_COPIA"
+            houve_falha = True
 
-    if not sucesso:
-         log(f"[FALHA] O arquivo {nome_arquivo_com_sufixo} não pôde ser copiado para nenhum diretório.\n", log_file)
+    if houve_falha:
+        resultado = "PENDENTE"
+        motivo = "Falha ao copiar para uma ou mais lojas"
+    elif houve_copia:
+        resultado = "SUCESSO"
+        motivo = None
+    else:
+        resultado = "JA_EXISTE"
+        motivo = None
+
+    if resultado == "PENDENTE":
+        log(
+            f"[PENDENTE] '{nome_limpo}' será tentado novamente na próxima execução.",
+            log_file,
+        )
+    else:
+        log(f"[{resultado}] '{nome_limpo}' concluído.", log_file)
+
+    return {
+        "arquivo": nome_limpo,
+        "origem": item["origem"],
+        "resultado": resultado,
+        "motivo": motivo,
+        "lojas": lojas_resultado,
+        "destinos": destinos,
+    }
 
 
 def processar_arquivos(diretorio_ccts, destino_rede, log_path):
-    
+    if not diretorio_ccts or not os.path.isdir(diretorio_ccts):
+        raise FileNotFoundError(f"Diretório de origem não encontrado: {diretorio_ccts}")
+
+    if not os.path.isdir(destino_rede):
+        raise FileNotFoundError(f"Diretório de destino base não encontrado: {destino_rede}")
+
+    raiz = os.path.abspath(diretorio_ccts.rstrip("\\/"))
+    if os.path.basename(raiz).lower() in ("sucesso", "reprocessar"):
+        raiz = os.path.dirname(raiz)
+
+    pasta_log = os.path.dirname(os.path.abspath(log_path))
+    os.makedirs(pasta_log, exist_ok=True)
+
     if os.path.exists(log_path):
         os.remove(log_path)
 
-    extensoes_permitidas = ['.pdf', '.doc', '.docx'] 
+    resumo = {
+        "sucesso": [],
+        "ja_existe": [],
+        "pendentes": [],
+        "arquivos": [],
+        "fora_do_padrao": [],
+    }
 
-    with open(log_path, 'w', encoding='utf-8') as log_file:
-        log(f"\n=== LOG {datetime.now().strftime('%Y-%m-%d %H:%M')} ===\n", log_file, espacamento=True)
-        
-        if not os.path.exists(diretorio_ccts):
-            log(f"[ERRO] Diretório de origem não encontrado: {diretorio_ccts}", log_file, espacamento=True)
-            log_file.close() 
-            return
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        log(
+            f"\n=== LOG {datetime.now().strftime('%Y-%m-%d %H:%M')} ===\n",
+            log_file,
+            espacamento=True,
+        )
+        log(f"[PASTA ANALISADA]: {raiz}", log_file)
+        log(f"[DESTINO]: {destino_rede}", log_file)
 
-        for arquivo in os.listdir(diretorio_ccts):
-            caminho_completo_arquivo = os.path.join(diretorio_ccts, arquivo)
-            if os.path.isfile(caminho_completo_arquivo):
-                _, extensao = os.path.splitext(arquivo) 
-                if extensao.lower() in extensoes_permitidas: 
-                    copiar_arquivo(diretorio_ccts, destino_rede, arquivo, log_file)
-                else:
-                    log(f"[IGNORADO] Arquivo {arquivo} não é um tipo de documento permitido (extensão: {extensao}).", log_file)
+        indice_lojas = indexar_lojas(destino_rede)
+        if not indice_lojas:
+            log(
+                f"[AVISO] Nenhuma pasta de loja foi encontrada em '{destino_rede}'.",
+                log_file,
+            )
 
+        candidatos, fora_do_padrao = coletar_arquivos(raiz, log_file)
+        resumo["fora_do_padrao"] = fora_do_padrao
+
+        log(f"[INFO] {len(candidatos)} arquivo(s) para avaliar.", log_file)
+
+        for item in candidatos:
+            resultado = copiar_arquivo(item, indice_lojas, log_file)
+            resumo["arquivos"].append(resultado)
+
+            if resultado["resultado"] == "SUCESSO":
+                resumo["sucesso"].append(resultado)
+            elif resultado["resultado"] == "JA_EXISTE":
+                resumo["ja_existe"].append(resultado)
+            else:
+                resumo["pendentes"].append(resultado)
+
+        log("=== RESUMO ===", log_file, espacamento=True)
+        log(f"Arquivos copiados: {len(resumo['sucesso'])}", log_file)
+        log(f"Arquivos já completos no destino: {len(resumo['ja_existe'])}", log_file)
+        log(f"Arquivos pendentes: {len(resumo['pendentes'])}", log_file)
+        log(f"Arquivos fora do padrão: {len(resumo['fora_do_padrao'])}", log_file)
         log("\n Processamento concluído!", log_file, espacamento=True)
+
+    return resumo
