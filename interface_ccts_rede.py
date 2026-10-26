@@ -2,7 +2,9 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import sys
 import os
-from ccts_rede import processar_arquivos
+
+import config_rede
+from ccts_rede import gerar_caminho_log, limpar_logs_antigos, processar_arquivos
 
 def resource_path(relative_path):
     try:
@@ -17,20 +19,11 @@ theme_path = resource_path("marsh.json")
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme(theme_path)
 
-destino_rede = r"M:\Remuneração e Benefícios\SINDICAIS\CONVENÇÕES_COLETIVAS"
-
-LOG_BASE_DIR = r"M:\Remuneração e Benefícios\SINDICAIS\Robô CCTS Rede\Logs"
-
-def get_log_directory():
-    log_dir = LOG_BASE_DIR
-    
-    os.makedirs(log_dir, exist_ok=True)
-    return log_dir
-
 class App:
     def __init__(self, root):
         self.root = root
         self.diretorio_ccts = None
+        self.settings = config_rede.carregar_settings()
         self.root.title("Robô CCTS para rede")
         self.root.geometry("1000x400")
 
@@ -48,7 +41,7 @@ class App:
 
         self.label = ctk.CTkLabel(
             self.mainframe,
-            text="Escolha a pasta com os documentos. Eles serão renomeados e movidos automaticamente.",
+            text="Escolha a pasta com os documentos. Eles serão renomeados e copiados automaticamente.",
             font=("Inter", 14, "bold"),
             fg_color="#397F5A",
             corner_radius=15
@@ -111,20 +104,28 @@ class App:
             messagebox.showwarning("Aviso", "Por favor, selecione um arquivo da pasta dos CCTs antes de iniciar.")
             return
 
-        log_directory = get_log_directory()
-        log_path = os.path.join(log_directory, "log_movimentacao.txt")
+        log_path = None
 
         try:
-            processar_arquivos(self.diretorio_ccts, destino_rede, log_path)
+            log_path = gerar_caminho_log(self.settings)
+
+            processar_arquivos(
+                self.diretorio_ccts,
+                self.settings["PastaDestinoBase"],
+                log_path,
+                self.settings,
+            )
             self.label_status.configure(text=f"Processo concluído! Log gerado em: {log_path}")
         except Exception as e:
             self.label_status.configure(text=f"Erro durante o processo: {e}")
             messagebox.showerror("Erro", f"Ocorreu um erro durante o processamento: {e}. Verifique o log para mais detalhes.")
-            try:
-                with open(log_path, 'a', encoding='utf-8') as f:
-                    f.write(f"\n[ERRO FATAL NA APLICAÇÃO]: {e}\n")
-            except Exception as log_e:
-                print(f"Não foi possível gravar o erro no log: {log_e}")
+            if log_path:
+                try:
+                    with open(log_path, 'a', encoding='utf-8') as f:
+                        f.write(f"\n[ERRO FATAL NA APLICAÇÃO]: {e}\n")
+                    limpar_logs_antigos(os.path.dirname(os.path.abspath(log_path)), log_path)
+                except Exception as log_e:
+                    print(f"Não foi possível gravar o erro no log: {log_e}")
             
     def mostra_guia(self):
         guia = (

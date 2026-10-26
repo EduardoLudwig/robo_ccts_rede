@@ -3,9 +3,12 @@ import re
 import shutil
 from datetime import datetime
 
+import config_rede
+
 EXTENSOES_PERMITIDAS = (".pdf", ".doc", ".docx")
 RE_MARCADOR_CONCLUIDO = re.compile(r"_(?:\[FEITO\]|\[JA_EXISTE\])$", re.IGNORECASE)
 RE_MARCADOR_LIMPEZA = re.compile(r"_(?:\[FEITO\]|\[JA_EXISTE\]|\[FALHA_MANUAL\])$", re.IGNORECASE)
+MAX_LOGS_TXT = 30
 
 
 def log(message, log_file, espacamento=False):
@@ -16,6 +19,71 @@ def log(message, log_file, espacamento=False):
     print(message.strip())
     log_file.write(message + "\n")
     log_file.flush()
+
+
+def _caminho_log_unico(pasta_logs, timestamp):
+    nome = f"log_{timestamp}.txt"
+    caminho = os.path.join(pasta_logs, nome)
+    contador = 1
+
+    while os.path.exists(caminho):
+        nome = f"log_{timestamp}_{contador}.txt"
+        caminho = os.path.join(pasta_logs, nome)
+        contador += 1
+
+    return caminho
+
+
+def _renomear_log_legado(pasta_logs):
+    legado = os.path.join(pasta_logs, "log_movimentacao.txt")
+
+    if not os.path.exists(legado):
+        return
+
+    try:
+        timestamp = datetime.fromtimestamp(os.path.getmtime(legado)).strftime(
+            "%Y-%m-%d_%H-%M-%S"
+        )
+        os.rename(legado, _caminho_log_unico(pasta_logs, timestamp))
+    except OSError as e:
+        print(f"[AVISO] Não foi possível renomear o log antigo: {e}")
+
+
+def gerar_caminho_log(settings):
+    pasta_logs = settings["PastaLogs"]
+
+    if not pasta_logs:
+        raise ValueError("A pasta de logs (PastaLogs) não está configurada.")
+
+    os.makedirs(pasta_logs, exist_ok=True)
+    _renomear_log_legado(pasta_logs)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return _caminho_log_unico(pasta_logs, timestamp)
+
+
+def limpar_logs_antigos(pasta_logs, log_atual):
+    nome_atual = os.path.basename(log_atual)
+
+    try:
+        arquivos = sorted(
+            nome
+            for nome in os.listdir(pasta_logs)
+            if nome != nome_atual
+            and nome.lower().startswith("log_")
+            and nome.lower().endswith(".txt")
+            and os.path.isfile(os.path.join(pasta_logs, nome))
+        )
+    except OSError as e:
+        print(f"[AVISO] Não foi possível listar os logs antigos: {e}")
+        return
+
+    while len(arquivos) > MAX_LOGS_TXT - 1:
+        nome = arquivos.pop(0)
+        try:
+            os.remove(os.path.join(pasta_logs, nome))
+        except OSError as e:
+            print(f"[AVISO] Não foi possível remover o log antigo '{nome}': {e}")
 
 
 def tem_marcador_concluido(nome_arquivo):
@@ -245,7 +313,13 @@ def copiar_arquivo(item, indice_lojas, log_file):
     }
 
 
-def processar_arquivos(diretorio_ccts, destino_rede, log_path):
+def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, settings=None):
+    settings = settings or config_rede.carregar_settings()
+    destino_rede = destino_rede or settings["PastaDestinoBase"]
+
+    if not log_path:
+        log_path = gerar_caminho_log(settings)
+
     if not diretorio_ccts or not os.path.isdir(diretorio_ccts):
         raise FileNotFoundError(f"Diretório de origem não encontrado: {diretorio_ccts}")
 
@@ -259,9 +333,6 @@ def processar_arquivos(diretorio_ccts, destino_rede, log_path):
     pasta_log = os.path.dirname(os.path.abspath(log_path))
     os.makedirs(pasta_log, exist_ok=True)
 
-    if os.path.exists(log_path):
-        os.remove(log_path)
-
     resumo = {
         "sucesso": [],
         "ja_existe": [],
@@ -271,6 +342,7 @@ def processar_arquivos(diretorio_ccts, destino_rede, log_path):
     }
 
     with open(log_path, "w", encoding="utf-8") as log_file:
+        limpar_logs_antigos(pasta_log, log_path)
         log(
             f"\n=== LOG {datetime.now().strftime('%Y-%m-%d %H:%M')} ===\n",
             log_file,
