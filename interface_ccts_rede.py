@@ -2,7 +2,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 import sys
 import os
-from ccts_rede_new import processar_arquivos
+from ccts_rede import processar_arquivos
 
 def resource_path(relative_path):
     try:
