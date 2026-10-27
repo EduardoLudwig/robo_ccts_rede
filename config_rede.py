@@ -80,4 +80,35 @@ def carregar_settings():
     }
 
 
+def carregar_email():
+    config = carregar_config()
+
+    if "Email" not in config:
+        raise ValueError("Seção [Email] não encontrada no config.ini.")
+
+    remetente = config.get("Email", "EmailRemetente", fallback="").strip()
+    senha = config.get("Email", "SenhaApp", fallback="").strip()
+    bruto = config.get("Email", "EmailDestinatario", fallback="").strip()
+
+    if not remetente or not senha or not bruto:
+        raise ValueError(
+            "Configuração de email incompleta. "
+            "Preencha EmailRemetente, SenhaApp e EmailDestinatario no config.ini"
+        )
+
+    destinatarios = [
+        email.strip()
+        for email in bruto.replace(",", ";").split(";")
+        if email.strip()
+    ]
+
+    if not destinatarios:
+        raise ValueError(
+            "EmailDestinatario vazio ou inválido no config.ini. "
+            "Separe múltiplos emails por ponto e vírgula (;) ou vírgula (,)"
+        )
+
+    return remetente, senha, destinatarios
+
+
 garantir_config_inicial()

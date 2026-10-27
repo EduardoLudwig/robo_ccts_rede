@@ -4,6 +4,7 @@ import shutil
 from datetime import datetime
 
 import config_rede
+import enviar_email
 
 EXTENSOES_PERMITIDAS = (".pdf", ".doc", ".docx")
 RE_MARCADOR_CONCLUIDO = re.compile(r"_(?:\[FEITO\]|\[JA_EXISTE\])$", re.IGNORECASE)
@@ -320,20 +321,13 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
     if not log_path:
         log_path = gerar_caminho_log(settings)
 
-    if not diretorio_ccts or not os.path.isdir(diretorio_ccts):
-        raise FileNotFoundError(f"Diretório de origem não encontrado: {diretorio_ccts}")
-
-    if not os.path.isdir(destino_rede):
-        raise FileNotFoundError(f"Diretório de destino base não encontrado: {destino_rede}")
-
-    raiz = os.path.abspath(diretorio_ccts.rstrip("\\/"))
-    if os.path.basename(raiz).lower() in ("sucesso", "reprocessar"):
-        raiz = os.path.dirname(raiz)
-
     pasta_log = os.path.dirname(os.path.abspath(log_path))
     os.makedirs(pasta_log, exist_ok=True)
 
+    data_execucao = datetime.now()
     resumo = {
+        "pasta": diretorio_ccts,
+        "destino": destino_rede,
         "sucesso": [],
         "ja_existe": [],
         "pendentes": [],
@@ -343,42 +337,69 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
 
     with open(log_path, "w", encoding="utf-8") as log_file:
         limpar_logs_antigos(pasta_log, log_path)
-        log(
-            f"\n=== LOG {datetime.now().strftime('%Y-%m-%d %H:%M')} ===\n",
-            log_file,
-            espacamento=True,
-        )
-        log(f"[PASTA ANALISADA]: {raiz}", log_file)
-        log(f"[DESTINO]: {destino_rede}", log_file)
 
-        indice_lojas = indexar_lojas(destino_rede)
-        if not indice_lojas:
+        try:
+            if not diretorio_ccts or not os.path.isdir(diretorio_ccts):
+                raise FileNotFoundError(f"Diretório de origem não encontrado: {diretorio_ccts}")
+
+            if not os.path.isdir(destino_rede):
+                raise FileNotFoundError(f"Diretório de destino base não encontrado: {destino_rede}")
+
+            raiz = os.path.abspath(diretorio_ccts.rstrip("\\/"))
+            if os.path.basename(raiz).lower() in ("sucesso", "reprocessar"):
+                raiz = os.path.dirname(raiz)
+
+            resumo["pasta"] = raiz
+
             log(
-                f"[AVISO] Nenhuma pasta de loja foi encontrada em '{destino_rede}'.",
+                f"\n=== LOG {data_execucao.strftime('%Y-%m-%d %H:%M')} ===\n",
                 log_file,
+                espacamento=True,
             )
+            log(f"[PASTA ANALISADA]: {raiz}", log_file)
+            log(f"[DESTINO]: {destino_rede}", log_file)
 
-        candidatos, fora_do_padrao = coletar_arquivos(raiz, log_file)
-        resumo["fora_do_padrao"] = fora_do_padrao
+            indice_lojas = indexar_lojas(destino_rede)
+            if not indice_lojas:
+                log(
+                    f"[AVISO] Nenhuma pasta de loja foi encontrada em '{destino_rede}'.",
+                    log_file,
+                )
 
-        log(f"[INFO] {len(candidatos)} arquivo(s) para avaliar.", log_file)
+            candidatos, fora_do_padrao = coletar_arquivos(raiz, log_file)
+            resumo["fora_do_padrao"] = fora_do_padrao
 
-        for item in candidatos:
-            resultado = copiar_arquivo(item, indice_lojas, log_file)
-            resumo["arquivos"].append(resultado)
+            log(f"[INFO] {len(candidatos)} arquivo(s) para avaliar.", log_file)
 
-            if resultado["resultado"] == "SUCESSO":
-                resumo["sucesso"].append(resultado)
-            elif resultado["resultado"] == "JA_EXISTE":
-                resumo["ja_existe"].append(resultado)
-            else:
-                resumo["pendentes"].append(resultado)
+            for item in candidatos:
+                resultado = copiar_arquivo(item, indice_lojas, log_file)
+                resumo["arquivos"].append(resultado)
 
-        log("=== RESUMO ===", log_file, espacamento=True)
-        log(f"Arquivos copiados: {len(resumo['sucesso'])}", log_file)
-        log(f"Arquivos já completos no destino: {len(resumo['ja_existe'])}", log_file)
-        log(f"Arquivos pendentes: {len(resumo['pendentes'])}", log_file)
-        log(f"Arquivos fora do padrão: {len(resumo['fora_do_padrao'])}", log_file)
-        log("\n Processamento concluído!", log_file, espacamento=True)
+                if resultado["resultado"] == "SUCESSO":
+                    resumo["sucesso"].append(resultado)
+                elif resultado["resultado"] == "JA_EXISTE":
+                    resumo["ja_existe"].append(resultado)
+                else:
+                    resumo["pendentes"].append(resultado)
+
+            log("=== RESUMO ===", log_file, espacamento=True)
+            log(f"Arquivos copiados: {len(resumo['sucesso'])}", log_file)
+            log(f"Arquivos já completos no destino: {len(resumo['ja_existe'])}", log_file)
+            log(f"Arquivos pendentes: {len(resumo['pendentes'])}", log_file)
+            log(f"Arquivos fora do padrão: {len(resumo['fora_do_padrao'])}", log_file)
+            log("\n Processamento concluído!", log_file, espacamento=True)
+
+        except Exception as e:
+            resumo["erro_fatal"] = f"{type(e).__name__}: {e}"
+            log(f"\n[ERRO FATAL]: {type(e).__name__}: {e}", log_file, espacamento=True)
+
+    relatorio_path = os.path.join(pasta_log, "relatorio.txt")
+    with open(relatorio_path, "w", encoding="utf-8") as arquivo_relatorio:
+        arquivo_relatorio.write(enviar_email.montar_relatorio(resumo, data_execucao))
+
+    enviar_email.enviar_relatorio(resumo, data_execucao, log_path, relatorio_path)
+
+    if resumo.get("erro_fatal"):
+        raise RuntimeError(resumo["erro_fatal"])
 
     return resumo
