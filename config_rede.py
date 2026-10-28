@@ -2,12 +2,13 @@ import configparser
 import os
 
 APP_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".RoboRede")
+APP_LOGS_DIR = os.path.join(APP_CONFIG_DIR, "Logs")
 CONFIG_FILE = os.path.join(APP_CONFIG_DIR, "config.ini")
 
 DEFAULTS = {
     "PastaBase": r"M:\Remuneração e Benefícios\SINDICAIS",
     "PastaDestinoBase": r"M:\Remuneração e Benefícios\SINDICAIS\CONVENÇÕES_COLETIVAS",
-    "PastaLogs": r"M:\Remuneração e Benefícios\SINDICAIS\Robô CCTS Rede\Logs",
+    "PastaLogs": APP_LOGS_DIR,
 }
 
 
@@ -37,6 +38,7 @@ def _gravar_config(config):
 
 def garantir_config_inicial():
     os.makedirs(APP_CONFIG_DIR, exist_ok=True)
+    os.makedirs(APP_LOGS_DIR, exist_ok=True)
 
     config = _ler_config()
     alterado = False
@@ -49,6 +51,13 @@ def garantir_config_inicial():
         if chave not in config["Settings"]:
             config["Settings"][chave] = valor
             alterado = True
+
+    pasta_logs = config.get("Settings", "PastaLogs", fallback="").strip()
+    if not pasta_logs or os.path.normcase(os.path.abspath(pasta_logs)) == os.path.normcase(
+        os.path.abspath(APP_CONFIG_DIR)
+    ):
+        config["Settings"]["PastaLogs"] = APP_LOGS_DIR
+        alterado = True
 
     if "Email" not in config:
         config["Email"] = {}

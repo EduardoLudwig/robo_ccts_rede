@@ -11,6 +11,21 @@ RE_MARCADOR_CONCLUIDO = re.compile(r"_(?:\[FEITO\]|\[JA_EXISTE\])$", re.IGNORECA
 RE_MARCADOR_LIMPEZA = re.compile(r"_(?:\[FEITO\]|\[JA_EXISTE\]|\[FALHA_MANUAL\])$", re.IGNORECASE)
 MAX_LOGS_TXT = 30
 
+MESES_PT = {
+    1: "JANEIRO",
+    2: "FEVEREIRO",
+    3: "MARÇO",
+    4: "ABRIL",
+    5: "MAIO",
+    6: "JUNHO",
+    7: "JULHO",
+    8: "AGOSTO",
+    9: "SETEMBRO",
+    10: "OUTUBRO",
+    11: "NOVEMBRO",
+    12: "DEZEMBRO",
+}
+
 
 def log(message, log_file, espacamento=False):
     if espacamento:
@@ -314,9 +329,59 @@ def copiar_arquivo(item, indice_lojas, log_file):
     }
 
 
+def _localizar_pasta_mes(pasta_ano, mes):
+    if not os.path.isdir(pasta_ano):
+        return None
+
+    for nome in sorted(os.listdir(pasta_ano)):
+        match = re.match(r"^(\d{1,2})(?:[_\s-]|$)", nome)
+        if not match or int(match.group(1)) != mes:
+            continue
+
+        caminho = os.path.join(pasta_ano, nome)
+        if os.path.isdir(caminho):
+            return caminho
+
+    return None
+
+
+def descobrir_diretorios_automaticos(settings, data_ref=None):
+    data_ref = data_ref or datetime.now()
+    ano, mes = data_ref.year, data_ref.month
+
+    if mes == 1:
+        ano_anterior, mes_anterior = ano - 1, 12
+    else:
+        ano_anterior, mes_anterior = ano, mes - 1
+
+    destinos = []
+    for ano_alvo, mes_alvo in ((ano, mes), (ano_anterior, mes_anterior)):
+        pasta_ano = os.path.join(
+            settings["PastaBase"], f"Análises sindicatos lojas {ano_alvo}"
+        )
+        caminho = _localizar_pasta_mes(pasta_ano, mes_alvo)
+        destinos.append(
+            caminho
+            or os.path.join(pasta_ano, f"{mes_alvo:02d}_{MESES_PT[mes_alvo]}")
+        )
+
+    return destinos
+
+
+def _normalizar_diretorios(diretorio_ccts):
+    if not diretorio_ccts:
+        return []
+
+    if isinstance(diretorio_ccts, (str, bytes, os.PathLike)):
+        return [os.fspath(diretorio_ccts)]
+
+    return [os.fspath(diretorio) for diretorio in diretorio_ccts]
+
+
 def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, settings=None):
     settings = settings or config_rede.carregar_settings()
     destino_rede = destino_rede or settings["PastaDestinoBase"]
+    diretorios_entrada = _normalizar_diretorios(diretorio_ccts)
 
     if not log_path:
         log_path = gerar_caminho_log(settings)
@@ -326,7 +391,7 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
 
     data_execucao = datetime.now()
     resumo = {
-        "pasta": diretorio_ccts,
+        "pastas": [],
         "destino": destino_rede,
         "sucesso": [],
         "ja_existe": [],
@@ -339,25 +404,39 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
         limpar_logs_antigos(pasta_log, log_path)
 
         try:
-            if not diretorio_ccts or not os.path.isdir(diretorio_ccts):
-                raise FileNotFoundError(f"Diretório de origem não encontrado: {diretorio_ccts}")
-
             if not os.path.isdir(destino_rede):
                 raise FileNotFoundError(f"Diretório de destino base não encontrado: {destino_rede}")
-
-            raiz = os.path.abspath(diretorio_ccts.rstrip("\\/"))
-            if os.path.basename(raiz).lower() in ("sucesso", "reprocessar"):
-                raiz = os.path.dirname(raiz)
-
-            resumo["pasta"] = raiz
 
             log(
                 f"\n=== LOG {data_execucao.strftime('%Y-%m-%d %H:%M')} ===\n",
                 log_file,
                 espacamento=True,
             )
-            log(f"[PASTA ANALISADA]: {raiz}", log_file)
             log(f"[DESTINO]: {destino_rede}", log_file)
+
+            raizes = []
+            vistos = set()
+
+            for diretorio in diretorios_entrada:
+                if not diretorio or not os.path.isdir(diretorio):
+                    log(f"[AVISO] Diretório de origem não encontrado: {diretorio}", log_file)
+                    continue
+
+                raiz = os.path.abspath(diretorio.rstrip("\\/"))
+                if os.path.basename(raiz).lower() in ("sucesso", "reprocessar"):
+                    raiz = os.path.dirname(raiz)
+
+                if raiz in vistos:
+                    continue
+
+                vistos.add(raiz)
+                raizes.append(raiz)
+                log(f"[PASTA ANALISADA]: {raiz}", log_file)
+
+            if not raizes:
+                raise FileNotFoundError("Nenhum diretório de origem válido foi encontrado.")
+
+            resumo["pastas"] = raizes
 
             indice_lojas = indexar_lojas(destino_rede)
             if not indice_lojas:
@@ -366,21 +445,25 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
                     log_file,
                 )
 
-            candidatos, fora_do_padrao = coletar_arquivos(raiz, log_file)
-            resumo["fora_do_padrao"] = fora_do_padrao
+            for raiz in raizes:
+                candidatos, fora_do_padrao = coletar_arquivos(raiz, log_file)
 
-            log(f"[INFO] {len(candidatos)} arquivo(s) para avaliar.", log_file)
+                for nome in fora_do_padrao:
+                    if nome not in resumo["fora_do_padrao"]:
+                        resumo["fora_do_padrao"].append(nome)
 
-            for item in candidatos:
-                resultado = copiar_arquivo(item, indice_lojas, log_file)
-                resumo["arquivos"].append(resultado)
+                log(f"[INFO] {len(candidatos)} arquivo(s) para avaliar em '{raiz}'.", log_file)
 
-                if resultado["resultado"] == "SUCESSO":
-                    resumo["sucesso"].append(resultado)
-                elif resultado["resultado"] == "JA_EXISTE":
-                    resumo["ja_existe"].append(resultado)
-                else:
-                    resumo["pendentes"].append(resultado)
+                for item in candidatos:
+                    resultado = copiar_arquivo(item, indice_lojas, log_file)
+                    resumo["arquivos"].append(resultado)
+
+                    if resultado["resultado"] == "SUCESSO":
+                        resumo["sucesso"].append(resultado)
+                    elif resultado["resultado"] == "JA_EXISTE":
+                        resumo["ja_existe"].append(resultado)
+                    else:
+                        resumo["pendentes"].append(resultado)
 
             log("=== RESUMO ===", log_file, espacamento=True)
             log(f"Arquivos copiados: {len(resumo['sucesso'])}", log_file)

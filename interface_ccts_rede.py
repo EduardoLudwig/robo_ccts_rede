@@ -4,7 +4,15 @@ import sys
 import os
 
 import config_rede
-from ccts_rede import gerar_caminho_log, limpar_logs_antigos, processar_arquivos
+from ccts_rede import (
+    descobrir_diretorios_automaticos,
+    gerar_caminho_log,
+    limpar_logs_antigos,
+    processar_arquivos,
+)
+
+AUTO_CLOSE_MS = 4000
+
 
 def resource_path(relative_path):
     try:
@@ -20,8 +28,9 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme(theme_path)
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, auto_start=False):
         self.root = root
+        self.auto_start = auto_start
         self.diretorio_ccts = None
         self.settings = config_rede.carregar_settings()
         self.root.title("Robô CCTS para rede")
@@ -104,13 +113,23 @@ class App:
             messagebox.showwarning("Aviso", "Por favor, selecione um arquivo da pasta dos CCTs antes de iniciar.")
             return
 
+        self._processar([self.diretorio_ccts])
+
+    def iniciar_processo_automatico(self):
+        diretorios = descobrir_diretorios_automaticos(self.settings)
+        self._processar(diretorios)
+
+    def _processar(self, diretorios):
         log_path = None
 
         try:
+            self.label_status.configure(text="Processando...")
+            self.root.update_idletasks()
+
             log_path = gerar_caminho_log(self.settings)
 
             processar_arquivos(
-                self.diretorio_ccts,
+                diretorios,
                 self.settings["PastaDestinoBase"],
                 log_path,
                 self.settings,
@@ -118,7 +137,7 @@ class App:
             self.label_status.configure(text=f"Processo concluído! Log gerado em: {log_path}")
         except Exception as e:
             self.label_status.configure(text=f"Erro durante o processo: {e}")
-            messagebox.showerror("Erro", f"Ocorreu um erro durante o processamento: {e}. Verifique o log para mais detalhes.")
+
             if log_path:
                 try:
                     with open(log_path, 'a', encoding='utf-8') as f:
@@ -126,7 +145,13 @@ class App:
                     limpar_logs_antigos(os.path.dirname(os.path.abspath(log_path)), log_path)
                 except Exception as log_e:
                     print(f"Não foi possível gravar o erro no log: {log_e}")
-            
+
+            if not self.auto_start:
+                messagebox.showerror("Erro", f"Ocorreu um erro durante o processamento: {e}. Verifique o log para mais detalhes.")
+        finally:
+            if self.auto_start:
+                self.root.after(AUTO_CLOSE_MS, self.root.destroy)
+
     def mostra_guia(self):
         guia = (
             "Os documentos da pasta selecionada devem seguir o seguinte padrão de nomenclatura:\n\n"
@@ -143,6 +168,12 @@ class App:
         messagebox.showinfo("Padrão necessário", guia)
 
 if __name__ == "__main__":
+    auto_start = "--auto-start" in sys.argv
+
     root = ctk.CTk()
-    app = App(root)
+    app = App(root, auto_start=auto_start)
+
+    if auto_start:
+        root.after(200, app.iniciar_processo_automatico)
+
     root.mainloop()

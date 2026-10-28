@@ -83,8 +83,16 @@ def montar_relatorio(resumo, data_ref):
         "",
     ]
 
-    if resumo.get("pasta"):
-        linhas.append(f"Pasta analisada: {resumo['pasta']}")
+    pastas = [pasta for pasta in resumo.get("pastas", []) if pasta]
+    if not pastas and resumo.get("pasta"):
+        pastas = [resumo["pasta"]]
+
+    if len(pastas) == 1:
+        linhas.append(f"Pasta analisada: {pastas[0]}")
+    elif pastas:
+        linhas.append("Pastas analisadas:")
+        for pasta in pastas:
+            linhas.append(f"   - {pasta}")
 
     if resumo.get("destino"):
         linhas.append(f"Pasta de destino: {resumo['destino']}")
@@ -176,12 +184,14 @@ def montar_corpo_html(resumo, data_ref):
     cor_pendentes = laranja if pendentes > 0 else cinza
     cor_fora_do_padrao = laranja if fora_do_padrao > 0 else cinza
 
-    partes = []
-    if resumo.get("pasta"):
-        partes.append(f"<div>{html.escape(resumo['pasta'])}</div>")
+    pastas = [pasta for pasta in resumo.get("pastas", []) if pasta]
+    if not pastas and resumo.get("pasta"):
+        pastas = [resumo["pasta"]]
+
+    partes = [f"<div>{html.escape(str(pasta))}</div>" for pasta in pastas]
 
     if resumo.get("destino"):
-        partes.append(f"<div>{html.escape(resumo['destino'])} (destino)</div>")
+        partes.append(f"<div>{html.escape(str(resumo['destino']))} (destino)</div>")
 
     pastas_html = "".join(partes) or "<div>Pastas não informadas</div>"
 
