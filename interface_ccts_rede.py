@@ -1,7 +1,7 @@
 import os
 import sys
 import threading
-from datetime import datetime
+import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -16,18 +16,21 @@ from ccts_rede import (
 
 AUTO_CLOSE_MS = 4000
 APP_TITLE = "Robô CCTS Rede"
+LIMITE_CAMINHO = 78
+LIMITE_DETALHE = 100
 
-COR_AZUL = "#1F6F78"
-COR_AZUL_HOVER = "#2A8A95"
-COR_FUNDO = "#0F1A1C"
-COR_CARD = "#152427"
-COR_CARD_HOVER = "#1B3034"
-COR_BORDA = "#2A4A4F"
-COR_TEXTO = "#EAF4F3"
-COR_TEXTO_SECUNDARIO = "#A8BCBE"
-COR_SUCESSO = "#5FBF83"
-COR_ERRO = "#E05A4F"
-COR_NEUTRO = "#A8BCBE"
+COR_AZUL = "#37909A"
+COR_AZUL_HOVER = "#D8E8FF"
+COR_FUNDO = "#070A0F"
+COR_CARD = "#0B1119"
+COR_CARD_HOVER = "#111A26"
+COR_BORDA = "#1B2735"
+COR_TEXTO = "#E8F0FB"
+COR_TEXTO_SECUNDARIO = "#8595AB"
+COR_SUCESSO = "#74C9A5"
+COR_ERRO = "#E07E72"
+COR_NEUTRO = "#F3F5F9"
+COR_ESCURO = "#070A0F"
 
 
 def resource_path(nome_arquivo):
@@ -47,7 +50,14 @@ class App:
         self.processando = False
         self.thread = None
         self.log_path = None
-        self.historico_atividade = []
+        self.resumo = {
+            "arquivos": 0,
+            "copiados": 0,
+            "ja_existiam": 0,
+            "pendentes": 0,
+        }
+        self._tooltip = None
+        self._tooltip_after = None
 
         self.root.title(APP_TITLE)
         self.root.geometry("960x660")
@@ -69,7 +79,7 @@ class App:
         self.root.grid_columnconfigure(0, weight=1)
 
         self.container = ctk.CTkFrame(self.root, fg_color="transparent")
-        self.container.grid(row=0, column=0, sticky="nsew", padx=30, pady=26)
+        self.container.grid(row=0, column=0, sticky="nsew", padx=30, pady=24)
         self.container.grid_columnconfigure(0, weight=1)
         self.container.grid_rowconfigure(3, weight=1)
 
@@ -82,39 +92,58 @@ class App:
     def _montar_cabecalho(self):
         self.header = ctk.CTkFrame(self.container, fg_color="transparent")
         self.header.grid(row=0, column=0, sticky="ew")
-        self.header.grid_columnconfigure(0, weight=1)
+        self.header.grid_columnconfigure(1, weight=1)
+
+        self.header_marca = ctk.CTkFrame(
+            self.header,
+            width=18,
+            height=18,
+            fg_color=COR_AZUL,
+            corner_radius=0,
+        )
+        self.header_marca.grid(row=0, column=0, sticky="w", padx=(0, 16))
+        self.header_marca.grid_propagate(False)
 
         self.label_titulo = ctk.CTkLabel(
             self.header,
-            text=APP_TITLE,
-            font=("Segoe UI", 24, "bold"),
+            text=APP_TITLE.upper(),
+            font=("Segoe UI", 26, "bold"),
             text_color=COR_TEXTO,
             anchor="w",
         )
-        self.label_titulo.grid(row=0, column=0, sticky="w")
+        self.label_titulo.grid(row=0, column=1, sticky="w")
 
         self.botao_ajuda = ctk.CTkButton(
             self.header,
-            text="Como usar",
-            width=104,
-            height=34,
+            text="COMO USAR",
+            width=126,
+            height=36,
             fg_color="transparent",
             hover_color=COR_CARD_HOVER,
+            border_width=1,
+            border_color=COR_BORDA,
             text_color=COR_TEXTO_SECUNDARIO,
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11, "bold"),
+            corner_radius=0,
             command=self.mostrar_guia,
         )
-        self.botao_ajuda.grid(row=0, column=1, sticky="e")
+        self.botao_ajuda.grid(row=0, column=2, sticky="e")
+
+        self.header_linha = ctk.CTkFrame(
+            self.container, height=1, fg_color=COR_BORDA
+        )
+        self.header_linha.grid(row=0, column=0, sticky="sew", pady=(16, 0))
+        self.header_linha.grid_propagate(False)
 
     def _montar_card_origem(self):
         self.card_origem = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.card_origem.grid(row=1, column=0, sticky="ew", pady=(24, 20))
+        self.card_origem.grid(row=1, column=0, sticky="ew", pady=(24, 18))
         self.card_origem.grid_columnconfigure(0, weight=1)
 
         self.label_origem = ctk.CTkLabel(
             self.card_origem,
             text="ORIGEM DOS DOCUMENTOS",
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
         )
@@ -127,43 +156,48 @@ class App:
             text_color=COR_TEXTO,
             anchor="w",
         )
-        self.label_origem_desc.grid(row=1, column=0, columnspan=2, sticky="w", padx=0, pady=(4, 0))
+        self.label_origem_desc.grid(row=1, column=0, columnspan=2, sticky="w", padx=0, pady=(6, 0))
 
         self.path_frame = ctk.CTkFrame(
             self.card_origem,
-            fg_color=COR_FUNDO,
+            fg_color=COR_CARD,
             border_width=1,
             border_color=COR_BORDA,
-            corner_radius=8,
+            corner_radius=0,
         )
-        self.path_frame.grid(row=2, column=0, sticky="ew", padx=(0, 12), pady=(12, 0))
+        self.path_frame.grid(row=2, column=0, sticky="ew", padx=(0, 14), pady=(16, 0))
         self.path_frame.grid_columnconfigure(0, weight=1)
 
         self.label_caminho = ctk.CTkLabel(
             self.path_frame,
             text="Nenhuma pasta selecionada",
-            font=("Segoe UI", 13),
+            width=180,
+            height=22,
+            font=("Segoe UI", 12),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
             justify="left",
-            wraplength=520,
+            wraplength=0,
         )
-        self.label_caminho.grid(row=0, column=0, sticky="ew", padx=14, pady=12)
+        self.label_caminho.grid(row=0, column=0, sticky="ew", padx=16, pady=15)
+        self.label_caminho.bind("<Enter>", self._agendar_tooltip_caminho)
+        self.label_caminho.bind("<Leave>", self._cancelar_tooltip_caminho)
 
         self.botao_caminho = ctk.CTkButton(
             self.card_origem,
-            text="Selecionar pasta",
-            width=158,
-            height=34,
-            fg_color=COR_CARD_HOVER,
-            hover_color=COR_BORDA,
+            text="SELECIONAR PASTA  ↗",
+            width=180,
+            height=48,
+            fg_color="transparent",
+            hover_color=COR_CARD_HOVER,
             border_width=1,
             border_color=COR_AZUL,
-            text_color=COR_TEXTO,
-            font=("Segoe UI", 12, "bold"),
+            text_color=COR_AZUL,
+            font=("Segoe UI", 11, "bold"),
+            corner_radius=0,
             command=self.selecionar_diretorio,
         )
-        self.botao_caminho.grid(row=2, column=1, sticky="e", pady=(12, 0))
+        self.botao_caminho.grid(row=2, column=1, sticky="e", pady=(16, 0))
 
     def _montar_card_status(self):
         self.card_status = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -173,104 +207,107 @@ class App:
         self.label_status_titulo = ctk.CTkLabel(
             self.card_status,
             text="STATUS DA EXECUÇÃO",
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
         )
         self.label_status_titulo.grid(row=0, column=0, sticky="w", padx=0)
 
         self.status_line = ctk.CTkFrame(self.card_status, fg_color="transparent")
-        self.status_line.grid(row=1, column=0, sticky="ew", padx=0, pady=(6, 0))
+        self.status_line.grid(row=1, column=0, sticky="ew", padx=0, pady=(10, 0))
         self.status_line.grid_columnconfigure(1, weight=1)
 
         self.status_dot = ctk.CTkLabel(
             self.status_line,
-            text="●",
-            width=18,
-            font=("Segoe UI", 18),
+            text="■",
+            width=20,
+            font=("Segoe UI", 14),
             text_color=COR_NEUTRO,
         )
-        self.status_dot.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.status_dot.grid(row=0, column=0, sticky="nw", padx=(0, 12), pady=(6, 0))
 
         self.label_status = ctk.CTkLabel(
             self.status_line,
-            text="Selecione a pasta de origem para começar",
-            font=("Segoe UI", 15, "bold"),
-            text_color=COR_TEXTO,
+            text="SELECIONE A PASTA DE ORIGEM PARA COMEÇAR",
+            font=("Segoe UI", 30, "bold"),
+            text_color=COR_AZUL,
             anchor="w",
+            justify="left",
+            wraplength=820,
         )
-        self.label_status.grid(row=0, column=1, sticky="w")
+        self.label_status.grid(row=0, column=1, sticky="ew")
 
         self.label_detalhe = ctk.CTkLabel(
             self.card_status,
             text="",
+            height=18,
             font=("Segoe UI", 12),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
             justify="left",
             wraplength=760,
         )
-        self.label_detalhe.grid(row=2, column=0, sticky="w", padx=0, pady=(2, 0))
+        self.label_detalhe.grid(row=2, column=0, sticky="w", padx=0, pady=(10, 0))
 
         self.progress = ctk.CTkProgressBar(
             self.card_status,
-            height=6,
-            corner_radius=3,
+            height=2,
+            corner_radius=0,
             mode="indeterminate",
             fg_color=COR_BORDA,
             progress_color=COR_AZUL,
             border_width=0,
         )
-        self.progress.grid(row=3, column=0, sticky="ew", padx=0, pady=(10, 0))
+        self.progress.grid(row=3, column=0, sticky="ew", padx=0, pady=(6, 0))
         self.progress.grid_remove()
 
         self.actions = ctk.CTkFrame(self.card_status, fg_color="transparent")
-        self.actions.grid(row=4, column=0, sticky="ew", padx=0, pady=(14, 0))
+        self.actions.grid(row=4, column=0, sticky="ew", padx=0, pady=(12, 0))
         self.actions.grid_columnconfigure(0, weight=0)
         self.actions.grid_columnconfigure(1, weight=0)
         self.actions.grid_columnconfigure(2, weight=1)
 
         self.botao_inicia = ctk.CTkButton(
             self.actions,
-            text="Iniciar processamento",
-            width=210,
-            height=38,
+            text="INICIAR PROCESSAMENTO",
+            width=248,
+            height=48,
             fg_color=COR_AZUL,
             hover_color=COR_AZUL_HOVER,
-            text_color="#FFFFFF",
-            font=("Segoe UI", 13, "bold"),
-            corner_radius=8,
+            text_color=COR_ESCURO,
+            text_color_disabled="#5C6B7E",
+            font=("Segoe UI", 11, "bold"),
+            corner_radius=0,
             command=self.iniciar_processo,
         )
         self.botao_inicia.grid(row=0, column=0, sticky="w")
 
         self.botao_logs = ctk.CTkButton(
             self.actions,
-            text="Abrir logs",
-            width=132,
-            height=38,
+            text="ABRIR LOGS",
+            width=146,
+            height=48,
             fg_color="transparent",
             hover_color=COR_CARD_HOVER,
             border_width=1,
             border_color=COR_BORDA,
             text_color=COR_TEXTO,
-            font=("Segoe UI", 12, "bold"),
-            corner_radius=8,
+            font=("Segoe UI", 11, "bold"),
+            corner_radius=0,
             command=self.abrir_logs,
         )
-        self.botao_logs.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.botao_logs.grid(row=0, column=1, sticky="w", padx=(12, 0))
 
     def _montar_card_atividade(self):
         self.card_atividade = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.card_atividade.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
+        self.card_atividade.grid(row=3, column=0, sticky="nsew", pady=(0, 16))
         self.card_atividade.grid_columnconfigure(0, weight=1)
-        self.card_atividade.grid_rowconfigure(4, weight=1)
 
         self.label_atividade_titulo = ctk.CTkLabel(
             self.card_atividade,
             text="ATIVIDADE",
             height=16,
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
         )
@@ -278,13 +315,12 @@ class App:
 
         self.label_loja_atual = ctk.CTkLabel(
             self.card_atividade,
-            text="Aguardando início",
-            height=26,
-            font=("Segoe UI", 17, "bold"),
+            text="AGUARDANDO INÍCIO",
+            font=("Segoe UI", 21, "bold"),
             text_color=COR_TEXTO,
             anchor="w",
             justify="left",
-            wraplength=800,
+            wraplength=820,
         )
         self.label_loja_atual.grid(row=1, column=0, sticky="ew", padx=0, pady=(4, 0))
 
@@ -292,11 +328,11 @@ class App:
             self.card_atividade,
             text="",
             height=18,
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 12),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
             justify="left",
-            wraplength=800,
+            wraplength=820,
         )
         self.label_detalhe_atividade.grid(
             row=2,
@@ -306,51 +342,84 @@ class App:
             pady=(2, 8),
         )
 
-        self.label_historico_titulo = ctk.CTkLabel(
+        self.resumo_divisor = ctk.CTkFrame(
+            self.card_atividade, height=1, fg_color=COR_BORDA
+        )
+        self.resumo_divisor.grid(row=3, column=0, sticky="ew", pady=(0, 6))
+        self.resumo_divisor.grid_propagate(False)
+
+        self.label_resumo_titulo = ctk.CTkLabel(
             self.card_atividade,
-            text="ÚLTIMAS AÇÕES",
+            text="RESUMO DA EXECUÇÃO",
+            height=14,
+            font=("Segoe UI", 10, "bold"),
+            text_color=COR_TEXTO_SECUNDARIO,
+            anchor="w",
+        )
+        self.label_resumo_titulo.grid(
+            row=4,
+            column=0,
+            sticky="w",
+            padx=0,
+            pady=(0, 4),
+        )
+
+        self.resumo_frame = ctk.CTkFrame(
+            self.card_atividade, fg_color="transparent"
+        )
+        self.resumo_frame.grid(row=5, column=0, sticky="ew", padx=0)
+        for coluna in range(4):
+            self.resumo_frame.grid_columnconfigure(
+                coluna, weight=1, uniform="resumo"
+            )
+
+        self.valor_arquivos = self._criar_metrica(
+            self.resumo_frame, 0, "ARQUIVOS"
+        )
+        self.valor_copiados = self._criar_metrica(
+            self.resumo_frame, 1, "COPIADOS"
+        )
+        self.valor_ja_existiam = self._criar_metrica(
+            self.resumo_frame, 2, "JÁ EXISTIAM"
+        )
+        self.valor_pendentes = self._criar_metrica(
+            self.resumo_frame, 3, "PENDENTES"
+        )
+
+    def _criar_metrica(self, pai, coluna, rotulo):
+        bloco = ctk.CTkFrame(pai, fg_color="transparent")
+        bloco.grid(row=0, column=coluna, sticky="w")
+
+        valor = ctk.CTkLabel(
+            bloco,
+            text="0",
+            height=30,
+            font=("Segoe UI", 20, "bold"),
+            text_color=COR_AZUL,
+            anchor="w",
+        )
+        valor.grid(row=0, column=0, sticky="w")
+
+        legenda = ctk.CTkLabel(
+            bloco,
+            text=rotulo,
             height=14,
             font=("Segoe UI", 9, "bold"),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
         )
-        self.label_historico_titulo.grid(
-            row=3,
-            column=0,
-            sticky="w",
-            padx=0,
-            pady=(0, 3),
-        )
-
-        self.historico_box = ctk.CTkTextbox(
-            self.card_atividade,
-            height=54,
-            fg_color=COR_FUNDO,
-            border_width=1,
-            border_color=COR_BORDA,
-            corner_radius=6,
-            text_color=COR_TEXTO_SECUNDARIO,
-            font=("Segoe UI", 10),
-            activate_scrollbars=False,
-        )
-        self.historico_box.grid(
-            row=4,
-            column=0,
-            sticky="nsew",
-            padx=0,
-        )
-        self.historico_box.insert("1.0", "Aguardando o início da execução.")
-        self.historico_box.configure(state="disabled")
+        legenda.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        return valor
 
     def _montar_rodape(self):
         self.footer = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.footer.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        self.footer.grid(row=4, column=0, sticky="ew", pady=(14, 0))
         self.footer.grid_columnconfigure(0, weight=1)
 
         self.label_destino = ctk.CTkLabel(
             self.footer,
-            text=f"Destino: {self.settings['PastaDestinoBase']}",
-            font=("Segoe UI", 11),
+            text=f"DESTINO  ·  {self.settings['PastaDestinoBase']}",
+            font=("Segoe UI", 10),
             text_color=COR_TEXTO_SECUNDARIO,
             anchor="w",
             justify="left",
@@ -359,14 +428,15 @@ class App:
         self.label_destino.grid(row=0, column=0, sticky="ew")
 
     def _configurar_estado_inicial(self):
+        self._resetar_resumo()
         if self.auto_start:
             self.label_caminho.configure(
                 text="Meses atual e anterior",
                 text_color=COR_TEXTO_SECUNDARIO,
             )
             self.botao_caminho.configure(state="disabled")
-            self.botao_inicia.configure(state="disabled")
             self.botao_logs.configure(state="disabled")
+            self._atualizar_botao_iniciar()
             self._definir_status(
                 "Execução automática",
                 COR_AZUL,
@@ -399,62 +469,156 @@ class App:
 
     def _definir_status(self, titulo, cor, detalhe):
         self.status_dot.configure(text_color=cor)
-        self.label_status.configure(text=titulo)
-        self.label_detalhe.configure(text=detalhe)
+        self.label_status.configure(text=(titulo or "").upper())
+        self.label_detalhe.configure(
+            text=self._resumir_texto(detalhe or "", LIMITE_DETALHE)
+        )
         if detalhe:
             self.label_detalhe.grid()
         else:
             self.label_detalhe.grid_remove()
 
     def _definir_atividade(self, loja, detalhe):
-        self.label_loja_atual.configure(text=loja or "—")
-        self.label_detalhe_atividade.configure(text=detalhe or "")
-
-    def _limpar_historico(self):
-        self.historico_atividade = []
-        self.historico_box.configure(state="normal")
-        self.historico_box.delete("1.0", "end")
-        self.historico_box.configure(state="disabled")
-
-    def _registrar_historico(self, texto):
-        self.historico_atividade.append(
-            f"{datetime.now().strftime('%H:%M:%S')}  {texto}"
+        self.label_loja_atual.configure(text=(loja or "—").upper())
+        self.label_detalhe_atividade.configure(
+            text=self._resumir_texto(detalhe or "", LIMITE_DETALHE)
         )
-        self.historico_atividade = self.historico_atividade[-4:]
-        self.historico_box.configure(state="normal")
-        self.historico_box.delete("1.0", "end")
-        self.historico_box.insert("1.0", "\n".join(self.historico_atividade))
-        self.historico_box.configure(state="disabled")
+
+    def _resumir_texto(self, texto, limite):
+        if len(texto) <= limite:
+            return texto
+        return texto[: limite - 3].rstrip() + "..."
+
+    def _resumir_caminho(self, caminho):
+        return self._resumir_texto(caminho, LIMITE_CAMINHO)
+
+    def _agendar_tooltip_caminho(self, _evento=None):
+        self._cancelar_tooltip_caminho()
+        if not self.diretorio_ccts or len(self.diretorio_ccts) <= LIMITE_CAMINHO:
+            return
+        self._tooltip_after = self.root.after(350, self._mostrar_tooltip_caminho)
+
+    def _mostrar_tooltip_caminho(self):
+        self._tooltip_after = None
+        if not self.diretorio_ccts or len(self.diretorio_ccts) <= LIMITE_CAMINHO:
+            return
+        if self._tooltip is not None and self._tooltip.winfo_exists():
+            return
+
+        self._tooltip = tk.Toplevel(self.root)
+        self._tooltip.wm_overrideredirect(True)
+        self._tooltip.configure(bg=COR_BORDA)
+        try:
+            self._tooltip.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        quadro = tk.Frame(self._tooltip, bg=COR_CARD, padx=12, pady=9)
+        quadro.pack(padx=1, pady=1)
+        tk.Label(
+            quadro,
+            text=self.diretorio_ccts,
+            bg=COR_CARD,
+            fg=COR_TEXTO,
+            font=("Segoe UI", 10),
+            justify="left",
+            wraplength=640,
+        ).pack()
+
+        x = self.label_caminho.winfo_rootx()
+        y = self.label_caminho.winfo_rooty() + self.label_caminho.winfo_height() + 8
+        self._tooltip.wm_geometry(f"+{x}+{y}")
+
+    def _cancelar_tooltip_caminho(self, _evento=None):
+        if self._tooltip_after is not None:
+            try:
+                self.root.after_cancel(self._tooltip_after)
+            except Exception:
+                pass
+            self._tooltip_after = None
+        if self._tooltip is not None:
+            try:
+                self._tooltip.destroy()
+            except Exception:
+                pass
+            self._tooltip = None
+
+    def _resetar_resumo(self):
+        self.resumo = {
+            "arquivos": 0,
+            "copiados": 0,
+            "ja_existiam": 0,
+            "pendentes": 0,
+        }
+        self._atualizar_resumo()
+
+    def _atualizar_resumo(self):
+        self.valor_arquivos.configure(text=str(self.resumo["arquivos"]))
+        self.valor_copiados.configure(text=str(self.resumo["copiados"]))
+        self.valor_ja_existiam.configure(text=str(self.resumo["ja_existiam"]))
+        self.valor_pendentes.configure(text=str(self.resumo["pendentes"]))
+
+    def _registrar_resultado_arquivo(self, resultado):
+        self.resumo["arquivos"] += 1
+
+        if resultado == "SUCESSO":
+            self.resumo["copiados"] += 1
+        elif resultado == "JA_EXISTE":
+            self.resumo["ja_existiam"] += 1
+        else:
+            self.resumo["pendentes"] += 1
+
+        self._atualizar_resumo()
 
     def _atualizar_botao_iniciar(self):
-        if self.processando or not self.diretorio_ccts:
-            self.botao_inicia.configure(state="disabled")
+        if self.processando:
+            self.botao_inicia.configure(
+                state="disabled",
+                text="PROCESSANDO…",
+                fg_color=COR_AZUL,
+                text_color=COR_ESCURO,
+                border_width=0,
+            )
+        elif self.diretorio_ccts:
+            self.botao_inicia.configure(
+                state="normal",
+                text="INICIAR PROCESSAMENTO",
+                fg_color=COR_AZUL,
+                text_color=COR_ESCURO,
+                border_width=0,
+            )
         else:
-            self.botao_inicia.configure(state="normal")
+            self.botao_inicia.configure(
+                state="disabled",
+                text="INICIAR PROCESSAMENTO",
+                fg_color=COR_CARD,
+                text_color="#4E5C6E",
+                border_width=1,
+                border_color=COR_BORDA,
+            )
 
     def _set_processing_state(self, ativo):
         self.processando = ativo
         estado = "disabled" if ativo else "normal"
         self.botao_caminho.configure(state=estado)
-        self.botao_inicia.configure(
-            state=estado,
-            text="Processando..." if ativo else "Iniciar processamento",
-        )
         self.botao_logs.configure(state=estado)
+        self._atualizar_botao_iniciar()
 
         if ativo:
             self.progress.grid()
             self.progress.start()
-        else:
-            self._atualizar_botao_iniciar()
 
     def selecionar_diretorio(self):
+        self._cancelar_tooltip_caminho()
         pasta = filedialog.askdirectory(title="Selecione a pasta de origem")
         if not pasta:
             return
 
         self.diretorio_ccts = os.path.normpath(pasta)
-        self.label_caminho.configure(text=self.diretorio_ccts, text_color=COR_TEXTO)
+        self.label_caminho.configure(
+            text=self._resumir_caminho(self.diretorio_ccts),
+            text_color=COR_TEXTO,
+        )
         self._definir_status(
             "Pasta de origem selecionada",
             COR_NEUTRO,
@@ -508,8 +672,7 @@ class App:
             "Preparando...",
             "Lendo os documentos de origem e indexando as lojas.",
         )
-        self._limpar_historico()
-        self._registrar_historico("Execução iniciada.")
+        self._resetar_resumo()
 
         def executar():
             log_path = None
@@ -543,13 +706,11 @@ class App:
                 "Pastas localizadas",
                 f"{total} pasta(s) de origem serão avaliadas.",
             )
-            self._registrar_historico("Análise das pastas iniciada.")
         elif etapa == "indexando":
             self._definir_atividade(
                 "Preparando destino",
                 "Lendo a estrutura de lojas do destino.",
             )
-            self._registrar_historico("Indexando lojas no destino.")
         elif etapa == "raiz":
             total = dados.get("total_arquivos", 0)
             raiz = dados.get("raiz", "")
@@ -557,7 +718,6 @@ class App:
                 "Analisando origem",
                 f"{total} arquivo(s) em {raiz}",
             )
-            self._registrar_historico(f"Analisando {os.path.basename(raiz)}.")
         elif etapa == "arquivo":
             arquivo = dados.get("arquivo", "")
             total = dados.get("total_lojas", 0)
@@ -565,7 +725,6 @@ class App:
                 "Avaliando arquivo",
                 f"{arquivo} — {total} destino(s) de loja",
             )
-            self._registrar_historico(f"Avaliando {arquivo}.")
         elif etapa == "loja":
             loja = dados.get("loja", "")
             arquivo = dados.get("arquivo", "")
@@ -583,7 +742,6 @@ class App:
                 loja,
                 " | ".join(partes) or "Loja em processamento.",
             )
-            self._registrar_historico(f"Percorrendo {loja}.")
         elif etapa == "loja_sem_destino":
             loja = dados.get("loja", "")
             arquivo = dados.get("arquivo", "")
@@ -591,7 +749,6 @@ class App:
                 f"Código {loja}",
                 f"{arquivo} | Nenhuma pasta de destino encontrada.",
             )
-            self._registrar_historico(f"Sem pasta para a loja {loja}.")
         elif etapa == "arquivo_finalizado":
             arquivo = dados.get("arquivo", "")
             resultado = dados.get("resultado", "")
@@ -600,11 +757,10 @@ class App:
             if motivo:
                 detalhe += f" | {motivo}"
             self._definir_atividade("Arquivo concluído", detalhe)
-            self._registrar_historico(f"{arquivo}: {resultado}.")
+            self._registrar_resultado_arquivo(resultado)
         elif etapa in ("relatorio", "email"):
             mensagem = dados.get("mensagem", "Finalizando a execução.")
             self._definir_atividade("Finalizando execução", mensagem)
-            self._registrar_historico(mensagem)
 
     def _finalizar_processamento(self, log_path, erro):
         self.processando = False
@@ -614,9 +770,6 @@ class App:
             pass
         self.progress.grid_remove()
         self.label_atividade_titulo.configure(text="ÚLTIMA ATIVIDADE")
-        self._registrar_historico(
-            "Execução interrompida." if erro else "Execução concluída."
-        )
 
         if erro:
             if log_path:
@@ -664,12 +817,12 @@ class App:
 
         titulo = ctk.CTkLabel(
             janela,
-            text="Como usar o robô",
-            font=("Segoe UI", 19, "bold"),
-            text_color=COR_TEXTO,
+            text="COMO USAR O ROBÔ",
+            font=("Segoe UI", 20, "bold"),
+            text_color=COR_AZUL,
             anchor="w",
         )
-        titulo.grid(row=0, column=0, sticky="w", padx=24, pady=(20, 10))
+        titulo.grid(row=0, column=0, sticky="w", padx=24, pady=(22, 12))
 
         texto = ctk.CTkTextbox(
             janela,
@@ -678,9 +831,9 @@ class App:
             border_color=COR_BORDA,
             text_color=COR_TEXTO,
             font=("Segoe UI", 13),
-            corner_radius=10,
+            corner_radius=0,
         )
-        texto.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 14))
+        texto.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 16))
         texto.insert(
             "1.0",
             "Os documentos da pasta selecionada devem seguir o seguinte padrão de nomenclatura:\n\n"
@@ -699,14 +852,16 @@ class App:
 
         botao_fechar = ctk.CTkButton(
             janela,
-            text="Fechar",
-            width=112,
-            height=38,
-            fg_color=COR_AZUL,
-            hover_color=COR_AZUL_HOVER,
-            text_color="#FFFFFF",
-            font=("Segoe UI", 12, "bold"),
-            corner_radius=8,
+            text="FECHAR",
+            width=120,
+            height=44,
+            fg_color="transparent",
+            hover_color=COR_CARD_HOVER,
+            border_width=1,
+            border_color=COR_BORDA,
+            text_color=COR_TEXTO,
+            font=("Segoe UI", 11, "bold"),
+            corner_radius=0,
             command=janela.destroy,
         )
         botao_fechar.grid(row=2, column=0, sticky="e", padx=24, pady=(0, 20))
@@ -721,6 +876,7 @@ class App:
                 "Aguarde a execução terminar antes de fechar.",
             )
             return
+        self._cancelar_tooltip_caminho()
         self.root.destroy()
 
 
