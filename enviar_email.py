@@ -176,7 +176,7 @@ def montar_corpo_html(resumo, data_ref):
     pendentes = len(resumo.get("pendentes", []))
     fora_do_padrao = len(resumo.get("fora_do_padrao", []))
 
-    verde = "#1A412C"
+    azul = "#1F6F78"
     cinza = "#666666"
     laranja = "#D9730D"
     vermelho = "#C0392B"
@@ -216,7 +216,7 @@ def montar_corpo_html(resumo, data_ref):
         "Arquivos copiados",
         "Documentos copiados com sucesso para todas as lojas correspondentes.",
         sucesso,
-        verde,
+        azul,
     )
     tabela += linha_resumo(
         "Arquivos já existentes no destino",
@@ -247,7 +247,7 @@ def montar_corpo_html(resumo, data_ref):
     return f"""
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 100%; border: 1px solid #dddddd;">
   <tr>
-    <td bgcolor="{verde}" style="background-color: {verde}; padding: 18px 24px; {FONTE}">
+    <td bgcolor="{azul}" style="background-color: {azul}; padding: 18px 24px; {FONTE}">
       <div style="font-size: 20px; font-weight: bold; color: #ffffff;">Relatório do Robô CCTs Rede</div>
       <div style="font-size: 14px; color: #E3F1E8; padding-top: 6px;">Cópia das Convenções Coletivas de Trabalho para as pastas das lojas na rede</div>
       <div style="font-size: 14px; color: #E3F1E8;">{data_ref.strftime('%d/%m/%Y às %H:%M')}</div>

@@ -27,6 +27,15 @@ MESES_PT = {
 }
 
 
+def _notificar_progresso(progresso_callback, **dados):
+    if not progresso_callback:
+        return
+    try:
+        progresso_callback(dados)
+    except Exception:
+        pass
+
+
 def log(message, log_file, espacamento=False):
     if espacamento:
         print("\n" + "-" * 80)
@@ -231,13 +240,23 @@ def coletar_arquivos(raiz, log_file):
     return sorted(candidatos.values(), key=lambda item: item["nome_limpo"].lower()), fora_do_padrao
 
 
-def copiar_arquivo(item, indice_lojas, log_file):
+def copiar_arquivo(item, indice_lojas, log_file, progresso_callback=None):
     nome_limpo = item["nome_limpo"]
     numeros_loja = item["numeros"]
     vigencia = item["vigencia"]
     complemento = item["complemento"]
     extensao = os.path.splitext(nome_limpo)[1]
     sufixo_complemento = f"_{complemento.upper()}" if complemento else ""
+    total_destinos = sum(len(indice_lojas.get(int(numero), [])) for numero in numeros_loja)
+    indice_destino = 0
+
+    _notificar_progresso(
+        progresso_callback,
+        etapa="arquivo",
+        arquivo=nome_limpo,
+        origem=item["origem"],
+        total_lojas=total_destinos,
+    )
 
     log(f"\n[PROCESSANDO] {item['nome']}", log_file, espacamento=True)
     log(f"[ORIGEM]: {item['origem']}", log_file)
@@ -257,6 +276,15 @@ def copiar_arquivo(item, indice_lojas, log_file):
         diretorios = indice_lojas.get(int(numero), [])
 
         if not diretorios:
+            _notificar_progresso(
+                progresso_callback,
+                etapa="loja_sem_destino",
+                arquivo=nome_limpo,
+                origem=item["origem"],
+                loja=numero_formatado,
+                indice_loja=indice_destino,
+                total_lojas=total_destinos,
+            )
             log(
                 f"[ERRO] Nenhum diretório de destino encontrado para loja {numero} "
                 f"(formatado como {numero_formatado}).",
@@ -272,6 +300,18 @@ def copiar_arquivo(item, indice_lojas, log_file):
         falhou_loja = False
 
         for destino_dir in diretorios:
+            indice_destino += 1
+            _notificar_progresso(
+                progresso_callback,
+                etapa="loja",
+                arquivo=nome_limpo,
+                origem=item["origem"],
+                loja=os.path.basename(destino_dir),
+                numero_loja=numero_formatado,
+                indice_loja=indice_destino,
+                total_lojas=total_destinos,
+                caminho=destino_dir,
+            )
             destino_completo = os.path.join(destino_dir, novo_nome)
 
             if os.path.exists(destino_completo):
@@ -318,6 +358,15 @@ def copiar_arquivo(item, indice_lojas, log_file):
         )
     else:
         log(f"[{resultado}] '{nome_limpo}' concluído.", log_file)
+
+    _notificar_progresso(
+        progresso_callback,
+        etapa="arquivo_finalizado",
+        arquivo=nome_limpo,
+        origem=item["origem"],
+        resultado=resultado,
+        motivo=motivo,
+    )
 
     return {
         "arquivo": nome_limpo,
@@ -378,7 +427,13 @@ def _normalizar_diretorios(diretorio_ccts):
     return [os.fspath(diretorio) for diretorio in diretorio_ccts]
 
 
-def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, settings=None):
+def processar_arquivos(
+    diretorio_ccts,
+    destino_rede=None,
+    log_path=None,
+    settings=None,
+    progresso_callback=None,
+):
     settings = settings or config_rede.carregar_settings()
     destino_rede = destino_rede or settings["PastaDestinoBase"]
     diretorios_entrada = _normalizar_diretorios(diretorio_ccts)
@@ -437,7 +492,18 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
                 raise FileNotFoundError("Nenhum diretório de origem válido foi encontrado.")
 
             resumo["pastas"] = raizes
+            _notificar_progresso(
+                progresso_callback,
+                etapa="inicio",
+                pastas=raizes,
+                total_pastas=len(raizes),
+            )
 
+            _notificar_progresso(
+                progresso_callback,
+                etapa="indexando",
+                mensagem="Indexando as pastas das lojas no destino.",
+            )
             indice_lojas = indexar_lojas(destino_rede)
             if not indice_lojas:
                 log(
@@ -453,9 +519,20 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
                         resumo["fora_do_padrao"].append(nome)
 
                 log(f"[INFO] {len(candidatos)} arquivo(s) para avaliar em '{raiz}'.", log_file)
+                _notificar_progresso(
+                    progresso_callback,
+                    etapa="raiz",
+                    raiz=raiz,
+                    total_arquivos=len(candidatos),
+                )
 
                 for item in candidatos:
-                    resultado = copiar_arquivo(item, indice_lojas, log_file)
+                    resultado = copiar_arquivo(
+                        item,
+                        indice_lojas,
+                        log_file,
+                        progresso_callback,
+                    )
                     resumo["arquivos"].append(resultado)
 
                     if resultado["resultado"] == "SUCESSO":
@@ -476,10 +553,20 @@ def processar_arquivos(diretorio_ccts, destino_rede=None, log_path=None, setting
             resumo["erro_fatal"] = f"{type(e).__name__}: {e}"
             log(f"\n[ERRO FATAL]: {type(e).__name__}: {e}", log_file, espacamento=True)
 
+    _notificar_progresso(
+        progresso_callback,
+        etapa="relatorio",
+        mensagem="Gerando o relatório da execução.",
+    )
     relatorio_path = os.path.join(pasta_log, "relatorio.txt")
     with open(relatorio_path, "w", encoding="utf-8") as arquivo_relatorio:
         arquivo_relatorio.write(enviar_email.montar_relatorio(resumo, data_execucao))
 
+    _notificar_progresso(
+        progresso_callback,
+        etapa="email",
+        mensagem="Enviando o relatório por email.",
+    )
     enviar_email.enviar_relatorio(resumo, data_execucao, log_path, relatorio_path)
 
     if resumo.get("erro_fatal"):
