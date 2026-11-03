@@ -1,0 +1,6 @@
+pyinstaller --noconfirm --clean --onefile --windowed `
+  --name RoboCCTsRede `
+  --icon icone_rede.ico `
+  --add-data "marsh.json;." `
+  --add-data "icone_rede.ico;." `
+  interface_ccts_rede.py

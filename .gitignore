@@ -4,5 +4,3 @@
 
 /Logs/
 __pycache__
-
-pyinstaller Rede.txt
